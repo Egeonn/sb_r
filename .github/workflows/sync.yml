@@ -1,65 +1,55 @@
-name: Config Update
+name: rule update
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
   schedule:
-    - cron: '0 12 * * *'
+    - cron: "0 */8 * * *"
+
+# 🌟 必须显式声明写入权限，否则无法推送到 release 分支
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
-    - uses: actions/checkout@v2
-    - name: "Setup sing-box"
-      env:
-        SING_BOX_DEB_URL: "https://github.com/SagerNet/sing-box/releases/download/v1.10.0-alpha.27/sing-box_1.10.0-alpha.27_linux_amd64.deb"
-      run: |
+      - name: Checkout Code
+        uses: actions/checkout@v4  # 升级到 v4
+
+      - name: Setup sing-box
+        env:
+          SING_BOX_DEB_URL: "https://github.com/SagerNet/sing-box/releases/download/v1.13.8/sing-box_1.13.8_linux_amd64.deb"
+        run: |
           set -Eeuo pipefail
           wget -O sing-box.deb $SING_BOX_DEB_URL
           sudo dpkg -i sing-box.deb
-    - name: Set up Python3
-      uses: actions/setup-python@v2
-      with:
-        python-version: 3.x
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install pandas requests pyyaml
-    - name: Download content
-      run: |
-        URL="https://raw.githubusercontent.com/AdguardTeam/AdguardFilters/master/BaseFilter/sections/adservers.txt"
-        OUTPUT_FILE="./rule/adservers.txt"
 
-        curl -L $URL -o $OUTPUT_FILE
+      - name: Set up Python3
+        uses: actions/setup-python@v5  # 升级到 v5
+        with:
+          python-version: '3.11' # 指定一个明确的高级版本，提升稳定性
 
-        if [ -f "$OUTPUT_FILE" ]; then
-          echo "Download successful: $OUTPUT_FILE"
-        else
-          echo "Download failed."
-          exit 1
-        fi
-    - name: Convert AdGuard DNS Filter to sing-box rule set
-      run: |
-        sing-box rule-set convert --type adguard --output ./rule/adservers.srs ./rule/adservers.txt
-    - name: Run script
-      run: python ../main.py
-      working-directory: ./rule/
-    - name: Commit and push config.json
-      run: |
-        git config --global user.email "action@github.com"
-        git config --global user.name "GitHub Action"
-        git add ./rule/*.json
-        git add ./rule/*.srs
-        git add ./rule/*.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas requests pyyaml
 
-        # 检查是否有文件被修改
-        if git diff --staged --quiet; then
-          echo "No changes to commit"
-          exit 0
-        else
-          git commit -m "Update rules"
-          git push
-        fi
+      - name: Run script
+        working-directory: ./rule/
+        run: |
+          python ../main.py
+
+      # 🌟 用自动部署插件替换了原来繁琐的 git 原生命令
+      - name: Deploy to release branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: release           # 指定输出到 release 分支
+          publish_dir: ./rule               # 只把你脚本输出的 rule 文件夹里的内容推过去
+          force_orphan: true                # 清空历史提交，防止仓库体积爆炸
+          commit_message: "🔄 Update sing-box rules"
+          enable_jekyll: true               # 防止生成 .nojekyll 文件，保持分支清爽
