@@ -27,7 +27,7 @@ def is_ip_network(address):
         return False
 
 # ==========================================
-# AST 解析器组件 (逻辑保持不变)
+# AST 解析器组件
 # ==========================================
 def strip_outer_parens(s):
     s = s.strip()
@@ -118,13 +118,9 @@ def parse_logic_rule_ast(s):
 
 def fetch_and_parse_rules(url):
     headers = {'User-Agent': 'Mozilla/5.0'}
-    # 🚨 安全限制 1：设置严格超时，防止服务器恶意挂起导致 Actions 超时扣费
-    response = requests.get(url, headers=headers, timeout=15)
+    # ✅ 撤销了 5MB 限制，并将超时时间稍微放宽至 30 秒，确保巨型去广告规则能下载完毕
+    response = requests.get(url, headers=headers, timeout=30)
     response.raise_for_status()
-    
-    # 🚨 安全限制 2：防止内存溢出 (OOM) 攻击，拒绝处理大于 5MB 的单文件
-    if len(response.content) > 5 * 1024 * 1024:
-        raise ValueError("File too large (exceeds 5MB)")
     
     raw_text = response.text
     standard_rules_data = []
@@ -161,7 +157,6 @@ def fetch_and_parse_rules(url):
 
 def process_single_link(link, output_dir):
     try:
-        # 🚨 安全限制 3：安全提取文件名，防范路径遍历 (Path Traversal) 攻击
         parsed_url = urlparse(link)
         base_name = os.path.basename(parsed_url.path).split('.')[0]
         if not base_name or not re.match(r'^[\w\-\.]+$', base_name):
@@ -198,7 +193,6 @@ def process_single_link(link, output_dir):
         with open(json_file_path, 'w', encoding='utf-8') as f:
             json.dump(result_rules, f, ensure_ascii=False, indent=2, sort_keys=True)
 
-        # 🚨 安全限制 4：防御命令注入，强制以安全列表形式传递参数给底层操作系统
         try:
             subprocess.run(
                 ["sing-box", "rule-set", "compile", "--output", srs_file_path, json_file_path],
