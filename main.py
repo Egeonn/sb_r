@@ -1,187 +1,247 @@
-import pandas as pd
-import re
-import concurrent.futures
 import os
 import json
+import re
+import concurrent.futures
+import ipaddress
 import requests
 import yaml
-import ipaddress
-from io import StringIO
 
-# 映射字典
-MAP_DICT = {'DOMAIN-SUFFIX': 'domain_suffix', 'HOST-SUFFIX': 'domain_suffix', 'host-suffix': 'domain_suffix', 'DOMAIN': 'domain', 'HOST': 'domain', 'host': 'domain',
-            'DOMAIN-KEYWORD':'domain_keyword', 'HOST-KEYWORD': 'domain_keyword', 'host-keyword': 'domain_keyword', 'IP-CIDR': 'ip_cidr',
-            'ip-cidr': 'ip_cidr', 'IP-CIDR6': 'ip_cidr', 
-            'IP6-CIDR': 'ip_cidr','SRC-IP-CIDR': 'source_ip_cidr', 'GEOIP': 'geoip', 'DST-PORT': 'port',
-            'SRC-PORT': 'source_port', "URL-REGEX": "domain_regex", "DOMAIN-REGEX": "domain_regex"}
+# ==========================================
+# 核心映射基准 (已彻底移除 GEOIP)
+# ==========================================
+MAP_DICT = {
+    'DOMAIN-SUFFIX': 'domain_suffix', 'HOST-SUFFIX': 'domain_suffix', 'host-suffix': 'domain_suffix',
+    'DOMAIN': 'domain', 'HOST': 'domain', 'host': 'domain',
+    'DOMAIN-KEYWORD':'domain_keyword', 'HOST-KEYWORD': 'domain_keyword', 'host-keyword': 'domain_keyword',
+    'IP-CIDR': 'ip_cidr', 'ip-cidr': 'ip_cidr', 'IP-CIDR6': 'ip_cidr', 'IP6-CIDR': 'ip_cidr',
+    'SRC-IP-CIDR': 'source_ip_cidr', 
+    'DST-PORT': 'port', 'SRC-PORT': 'source_port',
+    "URL-REGEX": "domain_regex", "DOMAIN-REGEX": "domain_regex"
+}
 
-def read_yaml_from_url(url):
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    yaml_data = yaml.safe_load(response.text)
-    return yaml_data
-
-def read_list_from_url(url):
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        csv_data = StringIO(response.text)
-        df = pd.read_csv(csv_data, header=None, names=['pattern', 'address', 'other', 'other2', 'other3'], on_bad_lines='skip')
-    else:
-        return None
-    filtered_rows = []
-    rules = []
-    # 处理逻辑规则
-    if 'AND' in df['pattern'].values:
-        and_rows = df[df['pattern'].str.contains('AND', na=False)]
-        for _, row in and_rows.iterrows():
-            rule = {
-                "type": "logical",
-                "mode": "and",
-                "rules": []
-            }
-            pattern = ",".join(row.values.astype(str))
-            components = re.findall(r'\((.*?)\)', pattern)
-            for component in components:
-                for keyword in MAP_DICT.keys():
-                    if keyword in component:
-                        match = re.search(f'{keyword},(.*)', component)
-                        if match:
-                            value = match.group(1)
-                            rule["rules"].append({
-                                MAP_DICT[keyword]: value
-                            })
-            rules.append(rule)
-    for index, row in df.iterrows():
-        if 'AND' not in row['pattern']:
-            filtered_rows.append(row)
-    df_filtered = pd.DataFrame(filtered_rows, columns=['pattern', 'address', 'other', 'other2', 'other3'])
-    return df_filtered, rules
-
-def is_ipv4_or_ipv6(address):
+def is_ip_network(address):
     try:
-        ipaddress.IPv4Network(address)
-        return 'ipv4'
+        ipaddress.ip_network(address, strict=False)
+        return True
     except ValueError:
+        return False
+
+# ==========================================
+# AST 解析器组件：专治无限括号嵌套
+# ==========================================
+def strip_outer_parens(s):
+    """剥离字符串最外层的无用成对括号，直到露出真实逻辑，例如 '((A))' -> 'A'"""
+    s = s.strip()
+    while s.startswith('(') and s.endswith(')'):
+        depth = 0
+        is_single_group = True
+        for i in range(len(s) - 1):
+            if s[i] == '(': depth += 1
+            elif s[i] == ')': depth -= 1
+            
+            if depth == 0:
+                is_single_group = False
+                break
+        
+        if is_single_group:
+            s = s[1:-1].strip()
+        else:
+            break
+    return s
+
+def split_args_by_comma(s):
+    """在深度为0（即不在括号内）的地方，按照逗号分割参数"""
+    args = []
+    depth = 0
+    current_arg = []
+    for char in s:
+        if char == '(': depth += 1
+        elif char == ')': depth -= 1
+        
+        if char == ',' and depth == 0:
+            args.append("".join(current_arg).strip())
+            current_arg = []
+        else:
+            current_arg.append(char)
+            
+    if current_arg:
+        args.append("".join(current_arg).strip())
+    return [arg for arg in args if arg]
+
+def build_standard_rule(item):
+    """构建普通的单条规则，严格执行类型转换和连接符修正"""
+    if ',' in item and not item.startswith('/'): 
+        parts = item.split(',', 1)
+        pattern = parts[0].strip()
+        address = parts[1].split(',')[0].strip()
+    else:
+        address = item
+        if is_ip_network(address):
+            pattern = 'IP-CIDR' if ':' not in address else 'IP-CIDR6'
+        elif address.startswith('+.') or address.startswith('.'):
+            pattern = 'DOMAIN-SUFFIX'
+            address = address.lstrip('+.')
+        else:
+            pattern = 'DOMAIN'
+
+    if pattern in MAP_DICT:
+        mapped_pattern = MAP_DICT[pattern]
+        value = address
+        
+        # 端口类型的严格安检
+        if mapped_pattern in ['port', 'source_port']:
+            if str(value).isdigit():
+                value = int(value) 
+            else:
+                mapped_pattern = f"{mapped_pattern}_range" 
+                # 转换端口段符号：80-443 -> 80:443
+                value = str(value).replace('-', ':') 
+                
+        return {mapped_pattern: [value]}
+    return None
+
+def parse_logic_rule_ast(s):
+    """核心递归解析器：把嵌套文本转化为 JSON 树"""
+    s = strip_outer_parens(s)
+    
+    match = re.match(r'^(AND|OR|NOT),(.*)$', s, re.IGNORECASE)
+    if not match:
+        return build_standard_rule(s)
+        
+    mode = match.group(1).lower()
+    rest = strip_outer_parens(match.group(2))
+    
+    raw_args = split_args_by_comma(rest)
+    
+    parsed_rules = []
+    for arg in raw_args:
+        parsed = parse_logic_rule_ast(arg)
+        if parsed:
+            parsed_rules.append(parsed)
+            
+    if not parsed_rules:
+        return None
+        
+    # Sing-box 独有的 invert 属性挂载逻辑
+    if mode == 'not':
+        if len(parsed_rules) == 1:
+            parsed_rules[0]['invert'] = True
+            return parsed_rules[0]
+        else:
+            return {"type": "logical", "mode": "and", "rules": parsed_rules, "invert": True}
+    else:
+        return {"type": "logical", "mode": mode, "rules": parsed_rules}
+
+# ==========================================
+# 主流程控制
+# ==========================================
+def fetch_and_parse_rules(url):
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    response = requests.get(url, headers=headers, timeout=15)
+    response.raise_for_status()
+    
+    raw_text = response.text
+    standard_rules_data = []
+    logical_rules_data = [] 
+
+    # 兼容 YAML 解析
+    if url.endswith('.yaml') or 'payload:' in raw_text:
         try:
-            ipaddress.IPv6Network(address)
-            return 'ipv6'
-        except ValueError:
+            yaml_data = yaml.safe_load(raw_text)
+            items = yaml_data.get('payload', yaml_data) if isinstance(yaml_data, dict) else yaml_data
+            if not isinstance(items, list):
+                items = raw_text.splitlines()
+        except yaml.YAMLError:
+            items = raw_text.splitlines()
+    else:
+        items = raw_text.splitlines()
+
+    for item in items:
+        if not isinstance(item, str): continue
+        
+        # 数据清洗：去除 yaml 的 - 符和引号
+        item = item.strip("'\" \t")
+        if item.startswith('- '): item = item[2:].strip("'\" \t")
+        if not item or item.startswith('#'): continue
+
+        # 逻辑规则拦截点：只允许 AND 和 OR 作为顶级入口
+        if item.startswith(('AND,', 'OR,')):
+            parsed_logic = parse_logic_rule_ast(item)
+            if parsed_logic:
+                logical_rules_data.append(parsed_logic)
+            continue 
+
+        # 普通规则分发
+        rule_obj = build_standard_rule(item)
+        if rule_obj:
+            for k, v in rule_obj.items():
+                standard_rules_data.append((k, str(v[0])))
+
+    return standard_rules_data, logical_rules_data
+
+def process_single_link(link, output_dir):
+    try:
+        standard_rules, logical_rules = fetch_and_parse_rules(link)
+        if not standard_rules and not logical_rules:
             return None
 
-def parse_and_convert_to_dataframe(link):
-    rules = []
-    # 根据链接扩展名分情况处理
-    if link.endswith('.yaml') or link.endswith('.txt'):
-        try:
-            yaml_data = read_yaml_from_url(link)
-            rows = []
-            if not isinstance(yaml_data, str):
-                items = yaml_data.get('payload', [])
-            else:
-                lines = yaml_data.splitlines()
-                line_content = lines[0]
-                items = line_content.split()
-            for item in items:
-                address = item.strip("'")
-                if ',' not in item:
-                    if is_ipv4_or_ipv6(item):
-                        pattern = 'IP-CIDR'
-                    else:
-                        if address.startswith('+') or address.startswith('.'):
-                            pattern = 'DOMAIN-SUFFIX'
-                            address = address[1:]
-                            if address.startswith('.'):
-                                address = address[1:]
-                        else:
-                            pattern = 'DOMAIN'
+        result_rules = {"version": 4, "rules": []}
+
+        # 普通规则合并去重与组装
+        if standard_rules:
+            categorized_rules = {}
+            for pattern, address in set(standard_rules): 
+                if pattern not in categorized_rules: categorized_rules[pattern] = set()
+                categorized_rules[pattern].add(address)
+
+            for pattern, addresses in categorized_rules.items():
+                sorted_addresses = sorted(list(addresses))
+                
+                # 端口范围二次过滤
+                if pattern in ['port', 'source_port', 'port_range', 'source_port_range']:
+                    ports, port_ranges = [], []
+                    for a in sorted_addresses:
+                        (ports.append(int(a)) if a.isdigit() else port_ranges.append(a.replace('-', ':')))
+                    if ports: result_rules["rules"].append({pattern.replace('_range', ''): ports})
+                    if port_ranges: result_rules["rules"].append({f"{pattern.replace('_range', '')}_range": port_ranges})
                 else:
-                    pattern, address = item.split(',', 1)
-                if ',' in address:
-                    address = address.split(',', 1)[0]
-                rows.append({'pattern': pattern.strip(), 'address': address.strip(), 'other': None})
-            df = pd.DataFrame(rows, columns=['pattern', 'address', 'other'])
-        except:
-            df, rules = read_list_from_url(link)
-    else:
-        df, rules = read_list_from_url(link)
-    return df, rules
+                    result_rules["rules"].append({pattern: sorted_addresses})
 
-# 对字典进行排序，含list of dict
-def sort_dict(obj):
-    if isinstance(obj, dict):
-        return {k: sort_dict(obj[k]) for k in sorted(obj)}
-    elif isinstance(obj, list) and all(isinstance(elem, dict) for elem in obj):
-        return sorted([sort_dict(x) for x in obj], key=lambda d: sorted(d.keys())[0])
-    elif isinstance(obj, list):
-        return sorted(sort_dict(x) for x in obj)
-    else:
-        return obj
+        # 逻辑规则追加
+        if logical_rules:
+            result_rules["rules"].extend(logical_rules)
 
-def parse_list_file(link, output_directory):
-    try:
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            results= list(executor.map(parse_and_convert_to_dataframe, [link]))  # 使用executor.map并行处理链接, 得到(df, rules)元组的列表
-            dfs = [df for df, rules in results]   # 提取df的内容
-            rules_list = [rules for df, rules in results]  # 提取逻辑规则rules的内容
-            df = pd.concat(dfs, ignore_index=True)  # 拼接为一个DataFrame
-        df = df[~df['pattern'].str.contains('#')].reset_index(drop=True)  # 删除pattern中包含#号的行
-        df = df[df['pattern'].isin(MAP_DICT.keys())].reset_index(drop=True)  # 删除不在字典中的pattern
-        df = df.drop_duplicates().reset_index(drop=True)  # 删除重复行
-        df['pattern'] = df['pattern'].replace(MAP_DICT)  # 替换pattern为字典中的值
-        os.makedirs(output_directory, exist_ok=True)  # 创建自定义文件夹
+        # 文件输出
+        os.makedirs(output_dir, exist_ok=True)
+        base_name = os.path.basename(link).split('.')[0] or "ruleset"
+            
+        json_file_path = os.path.join(output_dir, f"{base_name}.json")
+        srs_file_path = os.path.join(output_dir, f"{base_name}.srs")
 
-        result_rules = {"version": 2, "rules": []}
-        domain_entries = []
-        for pattern, addresses in df.groupby('pattern')['address'].apply(list).to_dict().items():
-            if pattern == 'domain_suffix':
-                rule_entry = {pattern: [address.strip() for address in addresses]}
-                result_rules["rules"].append(rule_entry)
-                # domain_entries.extend([address.strip() for address in addresses])  # 1.9以下的版本需要额外处理 domain_suffix
-            elif pattern == 'domain':
-                domain_entries.extend([address.strip() for address in addresses])
-            else:
-                rule_entry = {pattern: [address.strip() for address in addresses]}
-                result_rules["rules"].append(rule_entry)
-        # 删除 'domain_entries' 中的重复值
-        domain_entries = list(set(domain_entries))
-        if domain_entries:
-            result_rules["rules"].insert(0, {'domain': domain_entries})
+        with open(json_file_path, 'w', encoding='utf-8') as f:
+            json.dump(result_rules, f, ensure_ascii=False, indent=2, sort_keys=True)
 
-        # 处理逻辑规则
-        """
-        if rules_list[0] != "[]":
-            result_rules["rules"].extend(rules_list[0])
-        """
+        # 执行系统编译命令
+        os.system(f"sing-box rule-set compile --output {srs_file_path} {json_file_path}")
+        print(f"✅ 成功编译: {srs_file_path}")
+        return srs_file_path
 
-        # 使用 output_directory 拼接完整路径
-        file_name = os.path.join(output_directory, f"{os.path.basename(link).split('.')[0]}.json")
-        with open(file_name, 'w', encoding='utf-8') as output_file:
-            result_rules_str = json.dumps(sort_dict(result_rules), ensure_ascii=False, indent=2)
-            result_rules_str = result_rules_str.replace('\\\\', '\\')
-            output_file.write(result_rules_str)
-
-        srs_path = file_name.replace(".json", ".srs")
-        os.system(f"sing-box rule-set compile --output {srs_path} {file_name}")
-        return file_name
     except Exception as e:
-        print(f'获取链接出错，已跳过：{link}，原因：{str(e)}')
-        pass
+        print(f"❌ 处理出错已跳过: {link} | 原因: {str(e)}")
+        return None
 
-# 读取 links.txt 中的每个链接并生成对应的 JSON 文件
-with open("../links.txt", 'r') as links_file:
-    links = links_file.read().splitlines()
+if __name__ == "__main__":
+    links_file_path = "../links.txt"
+    output_directory = "./"
+    
+    if os.path.exists(links_file_path):
+        with open(links_file_path, 'r', encoding='utf-8') as f:
+            links = [line.strip() for line in f if line.strip() and not line.startswith('#')]
 
-links = [l for l in links if l.strip() and not l.strip().startswith("#")]
-
-output_dir = "./"
-result_file_names = []
-
-for link in links:
-    result_file_name = parse_list_file(link, output_directory=output_dir)
-    result_file_names.append(result_file_name)
-
-# 打印生成的文件名
-# for file_name in result_file_names:
-    # print(file_name)
+        # 并发执行，火力全开
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(process_single_link, link, output_directory) for link in links]
+            for future in concurrent.futures.as_completed(futures):
+                future.result() 
+    else:
+        print(f"找不到文件: {links_file_path}")
