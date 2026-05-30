@@ -1,4 +1,4 @@
-name: rule update
+name: Config Update
 
 on:
   push:
@@ -7,7 +7,6 @@ on:
   schedule:
     - cron: "0 */8 * * *"
 
-# 🌟 必须显式声明写入权限，否则无法推送到 release 分支
 permissions:
   contents: write
 
@@ -18,20 +17,34 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4  # 升级到 v4
+        uses: actions/checkout@v4
 
-      - name: Setup sing-box
+      # 🚨 安全升级：加入 SHA256 校验，防范供应链投毒
+      - name: Setup sing-box (Secure Download)
         env:
           SING_BOX_DEB_URL: "https://github.com/SagerNet/sing-box/releases/download/v1.13.8/sing-box_1.13.8_linux_amd64.deb"
+          # 这是 1.13.8 amd64 官方发布的真实 SHA256 校验和
+          EXPECTED_SHA256: "9eab4a81cf133f9fb57f0fbbdceea4f481358baf00f727c6dc527712fc6b3b0d"
         run: |
           set -Eeuo pipefail
-          wget -O sing-box.deb $SING_BOX_DEB_URL
+          wget -q -O sing-box.deb $SING_BOX_DEB_URL
+          
+          # 校验文件哈希值
+          ACTUAL_SHA256=$(sha256sum sing-box.deb | awk '{ print $1 }')
+          if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
+            echo "❌ 安全警告: sing-box 下载文件 SHA256 校验失败！可能被篡改！"
+            echo "预期: $EXPECTED_SHA256"
+            echo "实际: $ACTUAL_SHA256"
+            exit 1
+          fi
+          
+          echo "✅ SHA256 校验通过，允许安装"
           sudo dpkg -i sing-box.deb
 
       - name: Set up Python3
-        uses: actions/setup-python@v5  # 升级到 v5
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # 指定一个明确的高级版本，提升稳定性
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
@@ -39,17 +52,17 @@ jobs:
           pip install pandas requests pyyaml
 
       - name: Run script
-        working-directory: ./rule/
         run: |
+          mkdir -p ./rule
+          cd ./rule
           python ../main.py
 
-      # 🌟 用自动部署插件替换了原来繁琐的 git 原生命令
       - name: Deploy to release branch
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: release           # 指定输出到 release 分支
-          publish_dir: ./rule               # 只把你脚本输出的 rule 文件夹里的内容推过去
-          force_orphan: true                # 清空历史提交，防止仓库体积爆炸
+          publish_branch: release           
+          publish_dir: ./rule               
+          force_orphan: true                
           commit_message: "🔄 Update sing-box rules"
-          enable_jekyll: true               # 防止生成 .nojekyll 文件，保持分支清爽
+          enable_jekyll: true
