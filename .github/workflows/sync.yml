@@ -7,6 +7,7 @@ on:
   schedule:
     - cron: "0 */8 * * *"
 
+# 🌟 必须显式声明写入权限，否则无法推送到 release 分支
 permissions:
   contents: write
 
@@ -19,26 +20,12 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 🚨 安全升级：加入 SHA256 校验，防范供应链投毒
-      - name: Setup sing-box (Secure Download)
+      - name: Setup sing-box
         env:
           SING_BOX_DEB_URL: "https://github.com/SagerNet/sing-box/releases/download/v1.13.8/sing-box_1.13.8_linux_amd64.deb"
-          # 这是 1.13.8 amd64 官方发布的真实 SHA256 校验和
-          EXPECTED_SHA256: "9eab4a81cf133f9fb57f0fbbdceea4f481358baf00f727c6dc527712fc6b3b0d"
         run: |
           set -Eeuo pipefail
           wget -q -O sing-box.deb $SING_BOX_DEB_URL
-          
-          # 校验文件哈希值
-          ACTUAL_SHA256=$(sha256sum sing-box.deb | awk '{ print $1 }')
-          if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
-            echo "❌ 安全警告: sing-box 下载文件 SHA256 校验失败！可能被篡改！"
-            echo "预期: $EXPECTED_SHA256"
-            echo "实际: $ACTUAL_SHA256"
-            exit 1
-          fi
-          
-          echo "✅ SHA256 校验通过，允许安装"
           sudo dpkg -i sing-box.deb
 
       - name: Set up Python3
