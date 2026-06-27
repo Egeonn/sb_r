@@ -68,7 +68,8 @@ def build_standard_rule(item):
     if ',' in item and not item.startswith('/'): 
         parts = item.split(',', 1)
         pattern = parts[0].strip()
-        address = parts[1].split(',')[0].strip()
+        # 兼容类似 IP-CIDR,1.1.1.1/32,no-resolve 的参数格式，只取第一段
+        address = parts[1].split(',')[0].strip() 
     else:
         address = item
         if is_ip_network(address):
@@ -118,7 +119,6 @@ def parse_logic_rule_ast(s):
 
 def fetch_and_parse_rules(url):
     headers = {'User-Agent': 'Mozilla/5.0'}
-    # ✅ 撤销了 5MB 限制，并将超时时间稍微放宽至 30 秒，确保巨型去广告规则能下载完毕
     response = requests.get(url, headers=headers, timeout=30)
     response.raise_for_status()
     
@@ -139,8 +139,20 @@ def fetch_and_parse_rules(url):
 
     for item in items:
         if not isinstance(item, str): continue
+        
         item = item.strip("'\" \t")
-        if item.startswith('- '): item = item[2:].strip("'\" \t")
+        if item.startswith('- '): 
+            item = item[2:].strip("'\" \t")
+            
+        # ✅ 新增：剥离行尾的内联注释 
+        # 正则解释：匹配至少一个空格或制表符 [ \t]+，接着是 #，然后是任意字符直到行尾 .*$
+        # 这样可以防止误杀 URL 中合法的 # 锚点 (如 example.com/path#section)
+        item = re.sub(r'[ \t]+#.*$', '', item)
+        
+        # 再次清理切除注释后可能残留的尾部空格
+        item = item.strip()
+        
+        # 跳过空行和纯注释行
         if not item or item.startswith('#'): continue
 
         if item.startswith(('AND,', 'OR,')):
