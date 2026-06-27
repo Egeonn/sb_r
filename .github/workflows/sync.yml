@@ -5,7 +5,7 @@ on:
     branches: [ main ]
   workflow_dispatch:
   schedule:
-    - cron: "0 */8 * * *"
+    - cron: '25 0,4,12 * * *'
 
 # 🌟 必须显式声明写入权限，否则无法推送到 release 分支
 permissions:
