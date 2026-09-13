@@ -1,7 +1,7 @@
 https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/anti_list.txt
 https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/Steam.txt
 https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/AI.txt
-https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/cn_ip.txt
+https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/geoip_cn.txt
 https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/Global.txt
 https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/GeositeCN.txt
 https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/Telegram.txt
