@@ -5,3 +5,11 @@ https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/geoip_cn.txt
 https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/Global.txt
 https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/GeositeCN.txt
 https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/Telegram.txt
+https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/anti_list.txt
+https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/Twitter.txt
+https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/Twitch.txt
+https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/Facebook.txt
+https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/Microsoft.txt
+https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/Google.txt
+https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/Spotify.txt
+https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/YouTube.txt
