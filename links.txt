@@ -13,3 +13,4 @@ https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/Microsoft.txt
 https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/Google.txt
 https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/Spotify.txt
 https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/YouTube.txt
+https://raw.githubusercontent.com/Egeonn/kkk/refs/heads/release/Apple.txt
