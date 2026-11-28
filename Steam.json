@@ -1,0 +1,40 @@
+{
+  "rules": [
+    {
+      "domain_suffix": [
+        "fanatical.com",
+        "humblebundle.com",
+        "playartifact.com",
+        "s.team",
+        "steam-api.com",
+        "steam-chat.com",
+        "steam.tv",
+        "steamcommunity.com",
+        "steamconnecttest.com",
+        "steamcontent.com",
+        "steamcontent.tnkjmec.com",
+        "steamdeck.com",
+        "steamgames.com",
+        "steampowered.com",
+        "steamserver.net",
+        "steamstat.us",
+        "steamstatic.com",
+        "steamusercontent.com",
+        "underlords.com",
+        "valvesoftware.com",
+        "valvesoftware.comDOMAIN-SUFFIX"
+      ]
+    },
+    {
+      "domain": [
+        "steambroadcast.akamaized.net",
+        "steamcommunity-a.akamaihd.net",
+        "steampipe.akamaized.net",
+        "steamstore-a.akamaihd.net",
+        "steamusercontent-a.akamaihd.net",
+        "steamuserimages-a.akamaihd.net"
+      ]
+    }
+  ],
+  "version": 4
+}
